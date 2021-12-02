@@ -1,0 +1,9 @@
+[package]
+name = "day23"
+description = "Advent of Code 2021 - Day 23"
+version = "0.1.0"
+authors = ["Sergio de Carvalho <scarvalhojr@gmail.com>"]
+edition = "2021"
+
+[dependencies]
+clap = "2.34"
