@@ -1,8 +1,6 @@
 use clap::{crate_description, App, Arg};
 use day07::{part1, part2};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::num::ParseIntError;
+use std::fs::read_to_string;
 use std::process::exit;
 
 fn main() {
@@ -36,19 +34,13 @@ fn main() {
 }
 
 fn read_input(filename: &str) -> Result<Vec<i32>, String> {
-    let input_file = File::open(filename).map_err(|err| err.to_string())?;
-
-    BufReader::new(input_file)
-        .lines()
-        .zip(1..)
-        .map(|(line, line_num)| {
-            line.map_err(|err| (line_num, err.to_string()))
-                .and_then(|value| {
-                    value.parse().map_err(|err: ParseIntError| {
-                        (line_num, err.to_string())
-                    })
-                })
+    read_to_string(filename)
+        .map_err(|err| err.to_string())?
+        .split(',')
+        .map(|num| {
+            num.trim()
+                .parse()
+                .map_err(|err| format!("Invalid position '{}': {}", num, err))
         })
         .collect::<Result<_, _>>()
-        .map_err(|(line_num, err)| format!("Line {}: {}", line_num, err))
 }
