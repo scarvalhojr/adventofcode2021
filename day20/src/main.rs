@@ -1,8 +1,6 @@
 use clap::{crate_description, App, Arg};
-use day20::{part1, part2};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::num::ParseIntError;
+use day20::{part1, part2, EnhanceAlgo, Image};
+use std::fs::read_to_string;
 use std::process::exit;
 
 fn main() {
@@ -17,7 +15,7 @@ fn main() {
 
     println!(crate_description!());
 
-    let input = match read_input(args.value_of("INPUT").unwrap()) {
+    let (algo, image) = match read_input(args.value_of("INPUT").unwrap()) {
         Ok(data) => data,
         Err(err) => {
             println!("Failed to read input: {}", err);
@@ -25,30 +23,29 @@ fn main() {
         }
     };
 
-    match part1(&input) {
+    match part1(&algo, &image) {
         Some(answer) => println!("Part 1: {}", &answer),
         None => println!("Part 1: Not found"),
     }
-    match part2(&input) {
+    match part2(&algo, &image) {
         Some(answer) => println!("Part 2: {}", &answer),
         None => println!("Part 2: Not found"),
     }
 }
 
-fn read_input(filename: &str) -> Result<Vec<i32>, String> {
-    let input_file = File::open(filename).map_err(|err| err.to_string())?;
+fn read_input(filename: &str) -> Result<(EnhanceAlgo, Image), String> {
+    let contents = read_to_string(filename).map_err(|err| err.to_string())?;
+    let mut blocks = contents.split("\n\n");
 
-    BufReader::new(input_file)
-        .lines()
-        .zip(1..)
-        .map(|(line, line_num)| {
-            line.map_err(|err| (line_num, err.to_string()))
-                .and_then(|value| {
-                    value.parse().map_err(|err: ParseIntError| {
-                        (line_num, err.to_string())
-                    })
-                })
-        })
-        .collect::<Result<_, _>>()
-        .map_err(|(line_num, err)| format!("Line {}: {}", line_num, err))
+    let algo = blocks
+        .next()
+        .ok_or_else(|| "Missing algorithm line".to_string())
+        .and_then(|line| line.parse())?;
+
+    let image = blocks
+        .next()
+        .ok_or_else(|| "Missing image".to_string())
+        .and_then(|line| line.parse())?;
+
+    Ok((algo, image))
 }
