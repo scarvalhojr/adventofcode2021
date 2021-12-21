@@ -1,8 +1,6 @@
 use clap::{crate_description, App, Arg};
 use day21::{part1, part2};
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::num::ParseIntError;
+use std::fs::read_to_string;
 use std::process::exit;
 
 fn main() {
@@ -17,7 +15,7 @@ fn main() {
 
     println!(crate_description!());
 
-    let input = match read_input(args.value_of("INPUT").unwrap()) {
+    let (player1, player2) = match read_input(args.value_of("INPUT").unwrap()) {
         Ok(data) => data,
         Err(err) => {
             println!("Failed to read input: {}", err);
@@ -25,30 +23,29 @@ fn main() {
         }
     };
 
-    match part1(&input) {
-        Some(answer) => println!("Part 1: {}", &answer),
-        None => println!("Part 1: Not found"),
-    }
-    match part2(&input) {
-        Some(answer) => println!("Part 2: {}", &answer),
-        None => println!("Part 2: Not found"),
-    }
+    println!("Part 1: {}", part1(player1, player2));
+    println!("Part 2: {}", part2(player1, player2));
 }
 
-fn read_input(filename: &str) -> Result<Vec<i32>, String> {
-    let input_file = File::open(filename).map_err(|err| err.to_string())?;
-
-    BufReader::new(input_file)
+fn read_input(filename: &str) -> Result<(u64, u64), String> {
+    read_to_string(filename)
+        .map_err(|err| err.to_string())?
+        .trim()
         .lines()
-        .zip(1..)
-        .map(|(line, line_num)| {
-            line.map_err(|err| (line_num, err.to_string()))
-                .and_then(|value| {
-                    value.parse().map_err(|err: ParseIntError| {
-                        (line_num, err.to_string())
-                    })
+        .map(|line| {
+            line.trim()
+                .split_once(':')
+                .ok_or_else(|| format!("Invalid input line '{}'", line))
+                .and_then(|(_, num)| {
+                    num.trim()
+                        .parse()
+                        .map_err(|_| format!("Invalid number '{}'", num))
                 })
         })
-        .collect::<Result<_, _>>()
-        .map_err(|(line_num, err)| format!("Line {}: {}", line_num, err))
+        .collect::<Result<Vec<u64>, _>>()
+        .and_then(|vec| {
+            vec.try_into()
+                .map_err(|_| "Input must have exactly two lines".to_string())
+        })
+        .map(|numbers: [u64; 2]| (numbers[0], numbers[1]))
 }
