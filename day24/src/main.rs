@@ -1,5 +1,5 @@
 use clap::{crate_description, App, Arg};
-use day24::{part1, part2, solve, Instruction};
+use day24::{solve, Instruction};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::process::exit;
@@ -29,17 +29,6 @@ fn main() {
     } else {
         println!("Part 1: Not found\nPart 2: Not found");
     }
-
-    /*
-    match part1(&input) {
-        Some(answer) => println!("Part 1: {}", &answer),
-        None => println!("Part 1: Not found"),
-    }
-    match part2(&input) {
-        Some(answer) => println!("Part 2: {}", &answer),
-        None => println!("Part 2: Not found"),
-    }
-    */
 }
 
 fn read_input(filename: &str) -> Result<Vec<Instruction>, String> {
