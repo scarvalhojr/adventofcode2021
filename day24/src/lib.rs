@@ -4,8 +4,6 @@ use Instruction::*;
 use Operand::*;
 use Variable::*;
 
-pub type Integer = i64;
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Variable {
     W,
@@ -17,7 +15,7 @@ pub enum Variable {
 #[derive(Clone, Copy, Debug)]
 pub enum Operand {
     Var(Variable),
-    Num(Integer),
+    Num(i64),
 }
 
 #[derive(Debug)]
@@ -30,55 +28,11 @@ pub enum Instruction {
     Eql(Variable, Operand),
 }
 
-type Registers = [Integer; 4];
+type Registers = [i64; 4];
+type Bounds = (i64, i64);
+type States = HashMap<Registers, Bounds>;
 
-fn exec(instr: &[Instruction], input: &[Integer]) -> Option<Registers> {
-    let mut regs = [0; 4];
-    let mut input_iter = input.iter().copied().rev();
-
-    for instruction in instr {
-        match instruction {
-            Inp(var) => {
-                regs[*var as usize] = input_iter.next()?;
-            }
-            Add(var, operand) => {
-                let (operand1, operand2) = operands(&regs, *var, *operand);
-                regs[*var as usize] = operand1 + operand2;
-            }
-            Mul(var, operand) => {
-                let (operand1, operand2) = operands(&regs, *var, *operand);
-                regs[*var as usize] = operand1 * operand2;
-            }
-            Div(var, operand) => {
-                let (operand1, operand2) = operands(&regs, *var, *operand);
-                if operand2 == 0 {
-                    return None;
-                }
-                regs[*var as usize] = operand1 / operand2;
-            }
-            Mod(var, operand) => {
-                let (operand1, operand2) = operands(&regs, *var, *operand);
-                if operand1 < 0 || operand2 <= 0 {
-                    return None;
-                }
-                regs[*var as usize] = operand1 % operand2;
-            }
-            Eql(var, operand) => {
-                let (operand1, operand2) = operands(&regs, *var, *operand);
-                let result = if operand1 == operand2 { 1 } else { 0 };
-                regs[*var as usize] = result;
-            }
-        }
-    }
-
-    Some(regs)
-}
-
-fn operands(
-    regs: &Registers,
-    var: Variable,
-    operand: Operand,
-) -> (Integer, Integer) {
+fn operands(regs: &Registers, var: Variable, operand: Operand) -> (i64, i64) {
     let operand1 = regs[var as usize];
     let operand2 = match operand {
         Var(v) => regs[v as usize],
@@ -87,94 +41,97 @@ fn operands(
     (operand1, operand2)
 }
 
-pub fn solve(instructions: &[Instruction]) -> Option<(i64, i64)> {
-    let mut states: HashMap<Registers, (i64, i64)> =
-        HashMap::from([([0; 4], (0, 0))]);
-    for instruction in instructions {
+impl Instruction {
+    fn evaluate(&self, regs: &mut Registers) -> Option<()> {
+        let (var, result) = match self {
+            Inp(_) => return None,
+            Add(var, operand) => {
+                let (operand1, operand2) = operands(regs, *var, *operand);
+                (*var, operand1 + operand2)
+            }
+            Mul(var, operand) => {
+                let (operand1, operand2) = operands(regs, *var, *operand);
+                (*var, operand1 * operand2)
+            }
+            Div(var, operand) => {
+                let (operand1, operand2) = operands(regs, *var, *operand);
+                if operand2 == 0 {
+                    return None;
+                }
+                (*var, operand1 / operand2)
+            }
+            Mod(var, operand) => {
+                let (operand1, operand2) = operands(regs, *var, *operand);
+                if operand1 < 0 || operand2 <= 0 {
+                    return None;
+                }
+                (*var, operand1 % operand2)
+            }
+            Eql(var, operand) => {
+                let (operand1, operand2) = operands(regs, *var, *operand);
+                (*var, if operand1 == operand2 { 1 } else { 0 })
+            }
+        };
+
+        regs[var as usize] = result;
+        Some(())
+    }
+
+    fn next_states(&self, mut states: States) -> Option<States> {
         let mut next_states = HashMap::new();
-        for (mut regs, (min, max)) in states.drain() {
-            match instruction {
-                Inp(var) => {
-                    for input in 1..=9 {
-                        let mut next_regs = regs;
-                        next_regs[*var as usize] = input;
-                        let next_min = min * 10 + input;
-                        let next_max = max * 10 + input;
-                        next_states
-                            .entry(next_regs)
-                            .and_modify(|range: &mut (i64, i64)| {
-                                range.0 = range.0.min(next_min);
-                                range.1 = range.1.max(next_max);
-                            })
-                            .or_insert((next_min, next_max));
-                    }
-                }
-                Add(var, operand) => {
-                    let (operand1, operand2) = operands(&regs, *var, *operand);
-                    regs[*var as usize] = operand1 + operand2;
+
+        if let Inp(var) = self {
+            for (regs, (min, max)) in states.drain() {
+                for input in 1..=9 {
+                    let mut next_regs = regs;
+                    next_regs[*var as usize] = input;
+                    let next_min = min * 10 + input;
+                    let next_max = max * 10 + input;
                     next_states
-                        .entry(regs)
-                        .and_modify(|range: &mut (i64, i64)| {
-                            range.0 = range.0.min(min);
-                            range.1 = range.1.max(max);
+                        .entry(next_regs)
+                        .and_modify(|bounds: &mut Bounds| {
+                            bounds.0 = bounds.0.min(next_min);
+                            bounds.1 = bounds.1.max(next_max);
                         })
-                        .or_insert((min, max));
+                        .or_insert((next_min, next_max));
                 }
-                Mul(var, operand) => {
-                    let (operand1, operand2) = operands(&regs, *var, *operand);
-                    regs[*var as usize] = operand1 * operand2;
-                    next_states
-                        .entry(regs)
-                        .and_modify(|range: &mut (i64, i64)| {
-                            range.0 = range.0.min(min);
-                            range.1 = range.1.max(max);
-                        })
-                        .or_insert((min, max));
-                }
-                Div(var, operand) => {
-                    let (operand1, operand2) = operands(&regs, *var, *operand);
-                    if operand2 == 0 {
-                        return None;
-                    }
-                    regs[*var as usize] = operand1 / operand2;
-                    next_states
-                        .entry(regs)
-                        .and_modify(|range: &mut (i64, i64)| {
-                            range.0 = range.0.min(min);
-                            range.1 = range.1.max(max);
-                        })
-                        .or_insert((min, max));
-                }
-                Mod(var, operand) => {
-                    let (operand1, operand2) = operands(&regs, *var, *operand);
-                    if operand1 < 0 || operand2 <= 0 {
-                        return None;
-                    }
-                    regs[*var as usize] = operand1 % operand2;
-                    next_states
-                        .entry(regs)
-                        .and_modify(|range: &mut (i64, i64)| {
-                            range.0 = range.0.min(min);
-                            range.1 = range.1.max(max);
-                        })
-                        .or_insert((min, max));
-                }
-                Eql(var, operand) => {
-                    let (operand1, operand2) = operands(&regs, *var, *operand);
-                    let result = if operand1 == operand2 { 1 } else { 0 };
-                    regs[*var as usize] = result;
-                    next_states
-                        .entry(regs)
-                        .and_modify(|range: &mut (i64, i64)| {
-                            range.0 = range.0.min(min);
-                            range.1 = range.1.max(max);
-                        })
-                        .or_insert((min, max));
-                }
+            }
+        } else {
+            for (mut regs, (min, max)) in states.drain() {
+                self.evaluate(&mut regs)?;
+                next_states
+                    .entry(regs)
+                    .and_modify(|bounds: &mut Bounds| {
+                        bounds.0 = bounds.0.min(min);
+                        bounds.1 = bounds.1.max(max);
+                    })
+                    .or_insert((min, max));
             }
         }
 
-        states = next_states;
+        Some(next_states)
+    }
+}
+
+fn run(
+    instructions: &[Instruction],
+    mut input: impl Iterator<Item = i64>,
+) -> Option<Registers> {
+    let mut regs = [0; 4];
+    for instruction in instructions {
+        if let Inp(var) = instruction {
+            regs[*var as usize] = input.next()?;
+        } else {
+            instruction.evaluate(&mut regs)?;
+        }
+    }
+    Some(regs)
+}
+
+pub fn solve(instructions: &[Instruction]) -> Option<(i64, i64)> {
+    let mut states = HashMap::from([([0; 4], (0, 0))]);
+    for instruction in instructions {
+        states = instruction.next_states(states)?;
     }
 
     let (min, max) = states
@@ -184,6 +141,19 @@ pub fn solve(instructions: &[Instruction]) -> Option<(i64, i64)> {
         .reduce(|(overal_min, overall_max), (state_min, state_max)| {
             (overal_min.min(state_min), overall_max.max(state_max))
         })?;
+
+    // Make sure the solutions do result in Z being zero
+    for mut solution in [min, max] {
+        let mut input = Vec::new();
+        while solution > 0 {
+            input.push(solution % 10);
+            solution /= 10;
+        }
+        if run(instructions, input.into_iter().rev())?[Z as usize] != 0 {
+            return None;
+        }
+    }
+
     Some((min, max))
 }
 
@@ -209,7 +179,7 @@ impl FromStr for Operand {
             return Ok(Var(var));
         }
 
-        s.parse::<Integer>()
+        s.parse::<i64>()
             .map_err(|_| format!("Invalid operand '{}'", s))
             .map(Num)
     }
