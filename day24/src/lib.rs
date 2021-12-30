@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use Expr::*;
@@ -32,7 +32,7 @@ pub enum Instruction {
     Eql(Variable, Operand),
 }
 
-type Variables = (Integer, Integer, Integer, Integer);
+type Registers = [Integer; 4];
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum Expr {
@@ -46,7 +46,7 @@ enum Expr {
     ModLiteral(Box<Expr>, Integer),
     EqlLiteral(Box<Expr>, Integer),
     EqlExpr(Box<Expr>, Box<Expr>),
-    ExpLiteral(Box<Expr>, Integer),
+    Memory(usize, Integer, Integer),
 }
 
 impl Display for Expr {
@@ -62,7 +62,7 @@ impl Display for Expr {
             ModLiteral(e, n) => write!(f, "({} % {})", e, n),
             EqlLiteral(e, n) => write!(f, "({} == {})", e, n),
             EqlExpr(e1, e2) => write!(f, "({} == {})", e1, e2),
-            ExpLiteral(e, n) => write!(f, "({} ^ {})", e, n),
+            Memory(n, _, _) => write!(f, "M{}", n),
         }
     }
 }
@@ -87,7 +87,7 @@ impl Expr {
 
     fn new_mul_lit(expr: Expr, literal: Integer) -> Self {
         match (expr, literal) {
-            (_, n) if n == 0 => Literal(n),
+            (_, n) if n == 0 => Literal(0),
             (e, n) if n == 1 => e,
             (Literal(n1), n2) => Literal(n1 * n2),
             (e, n) => MulLiteral(Box::new(e), n),
@@ -101,7 +101,6 @@ impl Expr {
             (Literal(n), e) if n == 1 => e,
             (e, Literal(n)) if n == 1 => e,
             (Literal(n1), Literal(n2)) => Literal(n1 * n2),
-            (e1, e2) if e1 == e2 => ExpLiteral(Box::new(e1), 2),
             (e1, e2) => MulExpr(Box::new(e1), Box::new(e2)),
         }
     }
@@ -118,7 +117,8 @@ impl Expr {
         match expr {
             Literal(num) => Literal(num % literal),
             e => {
-                if e.values().iter().all(|n| *n < literal) {
+                let (_min, max) = e.range();
+                if max < literal {
                     e
                 } else {
                     ModLiteral(Box::new(e), literal)
@@ -132,7 +132,16 @@ impl Expr {
             Literal(num) if num == literal => Literal(1),
             Literal(_) => Literal(0),
             Read(_) if literal < 1 || literal > 9 => Literal(0),
-            e => EqlLiteral(Box::new(e), literal),
+            e => {
+                let (min, max) = e.range();
+                if literal == min && literal == max {
+                    Literal(1)
+                } else if literal < min || literal > max {
+                    Literal(0)
+                } else {
+                    EqlLiteral(Box::new(e), literal)
+                }
+            }
         }
     }
 
@@ -143,11 +152,11 @@ impl Expr {
             (Read(_), Literal(n)) if n < 1 || n > 9 => Literal(0),
             (Literal(n), Read(_)) if n < 1 || n > 9 => Literal(0),
             (e1, e2) => {
-                let vals1 = e1.values();
-                let vals2 = e2.values();
-                if vals1.len() == 1 && vals2.len() == 1 && vals1 == vals2 {
+                let (min1, max1) = e1.range();
+                let (min2, max2) = e2.range();
+                if min1 == max1 && max1 == min2 && min2 == max2 {
                     Literal(1)
-                } else if vals1.is_disjoint(&vals2) {
+                } else if max1 < min2 || min1 > max2 {
                     Literal(0)
                 } else {
                     EqlExpr(Box::new(e1), Box::new(e2))
@@ -156,71 +165,83 @@ impl Expr {
         }
     }
 
-    fn values(&self) -> HashSet<Integer> {
+    fn range(&self) -> (i64, i64) {
         match self {
-            Read(_) => HashSet::from_iter(1..=9),
-            Literal(n) => HashSet::from([*n]),
-            AddLiteral(expr, literal) => expr
-                .values()
-                .iter()
-                .map(|n| *n + literal)
-                .collect::<HashSet<_>>(),
-            AddExpr(expr1, expr2) => expr1
-                .values()
-                .iter()
-                .flat_map(|n1| {
-                    expr2
-                        .values()
-                        .iter()
-                        .map(move |n2| n1 + n2)
-                        .collect::<HashSet<_>>()
-                })
-                .collect::<HashSet<_>>(),
-            MulLiteral(expr, literal) => expr
-                .values()
-                .iter()
-                .map(|n| *n * literal)
-                .collect::<HashSet<_>>(),
-            MulExpr(expr1, expr2) => expr1
-                .values()
-                .iter()
-                .flat_map(|n1| {
-                    expr2
-                        .values()
-                        .iter()
-                        .map(move |n2| n1 * n2)
-                        .collect::<HashSet<_>>()
-                })
-                .collect::<HashSet<_>>(),
-            DivLiteral(expr, literal) => expr
-                .values()
-                .iter()
-                .map(|n| *n / literal)
-                .collect::<HashSet<_>>(),
-            ModLiteral(expr, literal) => expr
-                .values()
-                .iter()
-                .map(|n| *n % literal)
-                .collect::<HashSet<_>>(),
-            EqlLiteral(_, _) => HashSet::from_iter(0..=1),
-            EqlExpr(_, _) => HashSet::from_iter(0..=1),
-            _ => unimplemented!(),
+            Read(_) => (1, 9),
+            Literal(n) => (*n, *n),
+            AddLiteral(expr, literal) => {
+                let (min, max) = expr.range();
+                (min + literal, max + literal)
+            }
+            AddExpr(expr1, expr2) => {
+                let (min1, max1) = expr1.range();
+                let (min2, max2) = expr2.range();
+                (min1 + min2, max1 + max2)
+            }
+            MulLiteral(expr, literal) => {
+                let (min, max) = expr.range();
+                if *literal >= 0 {
+                    (min * literal, max * literal)
+                } else {
+                    (max * literal, min * literal)
+                }
+            }
+            MulExpr(expr1, expr2) => {
+                let (min1, max1) = expr1.range();
+                let (min2, max2) = expr2.range();
+                let min = [min1 * min2, min1 * max2, max1 * min2, max1 * max2]
+                    .into_iter()
+                    .min()
+                    .unwrap();
+                let max = [min1 * min2, min1 * max2, max1 * min2, max1 * max2]
+                    .into_iter()
+                    .max()
+                    .unwrap();
+                (min, max)
+            }
+            DivLiteral(expr, literal) => {
+                let (min, max) = expr.range();
+                if *literal > 0 {
+                    (min / literal, max / literal)
+                } else {
+                    (max / literal, min / literal)
+                }
+            }
+            ModLiteral(expr, literal) => {
+                let (min, max) = expr.range();
+                if max < *literal {
+                    (min, max)
+                } else {
+                    (0, literal - 1)
+                }
+            }
+            EqlLiteral(_, _) => (0, 1),
+            EqlExpr(_, _) => (0, 1),
+            Memory(_, min, max) => (*min, *max),
         }
     }
 }
 
 fn reduce(instr: &[Instruction]) {
     let mut read_count = 0;
+    let mut mem_count = 0;
     let mut expression: HashMap<Variable, Expr> = [W, X, Y, Z]
         .into_iter()
         .map(|var| (var, Literal(0)))
         .collect();
 
-    for instruction in instr.iter().take(150) {
+    for (instruction, inst_num) in instr.iter().zip(1..) {
         match instruction {
             Inp(var) => {
                 expression.insert(*var, Read(read_count));
                 read_count += 1;
+                if !matches!(expression.get(&Z), Some(Literal(_))) {
+                    let expr = expression.remove(&Z).unwrap();
+                    let (min, max) = expr.range();
+                    println!("M{}: {} ({}, {})", mem_count, expr, min, max);
+                    expression.insert(Z, Memory(mem_count, min, max));
+                    mem_count += 1;
+                }
             }
             Add(var, Num(n)) => {
                 let expr = expression.remove(var).unwrap();
@@ -228,7 +249,7 @@ fn reduce(instr: &[Instruction]) {
             }
             Add(var1, Var(var2)) => {
                 let expr1 = expression.remove(var1).unwrap();
-                let expr2 = expression.get(&var2).unwrap().clone();
+                let expr2 = expression.get(var2).unwrap().clone();
                 expression.insert(*var1, Expr::new_add_expr(expr1, expr2));
             }
             Mul(var1, Var(var2)) => {
@@ -260,93 +281,73 @@ fn reduce(instr: &[Instruction]) {
             _ => unimplemented!(),
         }
 
-        // println!("\nVariables after instruction: {:?}", instruction);
-        // for var in [W, X, Y, Z] {
-        //     let expr = expression.get(&var).unwrap();
-        //     println!("{:?}: {} => {:?}", var, expr, expr.values());
-        // }
+        println!("\nInstruction {}: {:?}", inst_num, instruction);
+        for var in [W, X, Y, Z] {
+            let expr = expression.get(&var).unwrap();
+            let (min, max) = expr.range();
+            println!("{:?}: {} ({}, {})", var, expr, min, max);
+        }
     }
 
-    println!("\nVariables after all instructions:");
-    for var in [W, X, Y, Z] {
-        println!("{:?}: {}", var, expression.get(&var).unwrap());
-    }
+    println!(
+        "\nZ after all instructions:\n{}",
+        expression.get(&Z).unwrap()
+    );
 }
 
-fn exec(instr: &[Instruction], input: &[Integer]) -> Result<Variables, usize> {
-    let mut vars = (0, 0, 0, 0);
+fn exec(instr: &[Instruction], input: &[Integer]) -> Option<Registers> {
+    let mut regs = [0; 4];
     let mut input_iter = input.iter().copied().rev();
-    let mut input_counter = 0;
 
     for instruction in instr {
         match instruction {
             Inp(var) => {
-                let number = input_iter.next().ok_or(input_counter)?;
-                input_counter += 1;
-                store(&mut vars, *var, number);
+                regs[*var as usize] = input_iter.next()?;
             }
             Add(var, operand) => {
-                let (operand1, operand2) = operands(&vars, *var, *operand);
-                store(&mut vars, *var, operand1 + operand2);
+                let (operand1, operand2) = operands(&regs, *var, *operand);
+                regs[*var as usize] = operand1 + operand2;
             }
             Mul(var, operand) => {
-                let (operand1, operand2) = operands(&vars, *var, *operand);
-                store(&mut vars, *var, operand1 * operand2);
+                let (operand1, operand2) = operands(&regs, *var, *operand);
+                regs[*var as usize] = operand1 * operand2;
             }
             Div(var, operand) => {
-                let (operand1, operand2) = operands(&vars, *var, *operand);
+                let (operand1, operand2) = operands(&regs, *var, *operand);
                 if operand2 == 0 {
-                    return Err(input_counter);
+                    return None;
                 }
-                store(&mut vars, *var, operand1 / operand2);
+                regs[*var as usize] = operand1 / operand2;
             }
             Mod(var, operand) => {
-                let (operand1, operand2) = operands(&vars, *var, *operand);
+                let (operand1, operand2) = operands(&regs, *var, *operand);
                 if operand1 < 0 || operand2 <= 0 {
-                    return Err(input_counter);
+                    return None;
                 }
-                store(&mut vars, *var, operand1 % operand2);
+                regs[*var as usize] = operand1 % operand2;
             }
             Eql(var, operand) => {
-                let (operand1, operand2) = operands(&vars, *var, *operand);
+                let (operand1, operand2) = operands(&regs, *var, *operand);
                 let result = if operand1 == operand2 { 1 } else { 0 };
-                store(&mut vars, *var, result);
+                regs[*var as usize] = result;
             }
         }
     }
 
-    Ok(vars)
+    Some(regs)
 }
 
 fn operands(
-    vars: &Variables,
+    regs: &Registers,
     var: Variable,
     operand: Operand,
 ) -> (Integer, Integer) {
-    let operand1 = fetch(vars, var);
+    let operand1 = regs[var as usize];
     let operand2 = match operand {
-        Var(v) => fetch(vars, v),
+        Var(v) => regs[v as usize],
         Num(n) => n,
     };
     (operand1, operand2)
-}
-
-fn fetch(vars: &Variables, var: Variable) -> Integer {
-    match var {
-        W => vars.0,
-        X => vars.1,
-        Y => vars.2,
-        Z => vars.3,
-    }
-}
-
-fn store(vars: &mut Variables, var: Variable, num: Integer) {
-    match var {
-        W => vars.0 = num,
-        X => vars.1 = num,
-        Y => vars.2 = num,
-        Z => vars.3 = num,
-    }
 }
 
 #[derive(Debug)]
@@ -368,6 +369,100 @@ impl Input {
     }
 }
 
+pub fn solve(instructions: &[Instruction]) -> Option<(i64, i64)> {
+    let mut states: HashMap<Registers, (i64, i64)> =
+        HashMap::from([([0; 4], (0, 0))]);
+    for instruction in instructions {
+        println!("{} states", states.len());
+        let mut next_states = HashMap::new();
+        for (mut regs, (min, max)) in states.drain() {
+            match instruction {
+                Inp(var) => {
+                    for input in 1..=9 {
+                        let mut next_regs = regs;
+                        next_regs[*var as usize] = input;
+                        let next_min = min * 10 + input;
+                        let next_max = max * 10 + input;
+                        next_states
+                            .entry(next_regs)
+                            .and_modify(|range: &mut (i64, i64)| {
+                                range.0 = range.0.min(next_min);
+                                range.1 = range.1.max(next_max);
+                            })
+                            .or_insert((next_min, next_max));
+                    }
+                }
+                Add(var, operand) => {
+                    let (operand1, operand2) = operands(&regs, *var, *operand);
+                    regs[*var as usize] = operand1 + operand2;
+                    next_states
+                        .entry(regs)
+                        .and_modify(|range: &mut (i64, i64)| {
+                            range.0 = range.0.min(min);
+                            range.1 = range.1.max(max);
+                        })
+                        .or_insert((min, max));
+                }
+                Mul(var, operand) => {
+                    let (operand1, operand2) = operands(&regs, *var, *operand);
+                    regs[*var as usize] = operand1 * operand2;
+                    next_states
+                        .entry(regs)
+                        .and_modify(|range: &mut (i64, i64)| {
+                            range.0 = range.0.min(min);
+                            range.1 = range.1.max(max);
+                        })
+                        .or_insert((min, max));
+                }
+                Div(var, operand) => {
+                    let (operand1, operand2) = operands(&regs, *var, *operand);
+                    if operand2 == 0 {
+                        return None;
+                    }
+                    regs[*var as usize] = operand1 / operand2;
+                    next_states
+                        .entry(regs)
+                        .and_modify(|range: &mut (i64, i64)| {
+                            range.0 = range.0.min(min);
+                            range.1 = range.1.max(max);
+                        })
+                        .or_insert((min, max));
+                }
+                Mod(var, operand) => {
+                    let (operand1, operand2) = operands(&regs, *var, *operand);
+                    if operand1 < 0 || operand2 <= 0 {
+                        return None;
+                    }
+                    regs[*var as usize] = operand1 % operand2;
+                    next_states
+                        .entry(regs)
+                        .and_modify(|range: &mut (i64, i64)| {
+                            range.0 = range.0.min(min);
+                            range.1 = range.1.max(max);
+                        })
+                        .or_insert((min, max));
+                }
+                Eql(var, operand) => {
+                    let (operand1, operand2) = operands(&regs, *var, *operand);
+                    let result = if operand1 == operand2 { 1 } else { 0 };
+                    regs[*var as usize] = result;
+                    next_states
+                        .entry(regs)
+                        .and_modify(|range: &mut (i64, i64)| {
+                            range.0 = range.0.min(min);
+                            range.1 = range.1.max(max);
+                        })
+                        .or_insert((min, max));
+                }
+            }
+        }
+
+        states = next_states;
+    }
+    println!("Final: {} states", states.len());
+    Some((0, 0))
+}
+
 pub fn part1(instructions: &[Instruction]) -> Option<i64> {
     let mut input = Input::new();
     let mut report = 0;
@@ -377,17 +472,12 @@ pub fn part1(instructions: &[Instruction]) -> Option<i64> {
             report = 0;
         }
         report += 1;
-        match exec(instructions, &input.0) {
-            Ok((_w, _x, _y, z)) => {
-                // println!("OK: w = {}, x = {}, y = {}, z = {}", w, x, y, z);
-                if z == 0 {
-                    return Some(z);
-                }
+        if let Some([_, _, _, z]) = exec(instructions, &input.0) {
+            if z == 0 {
+                // TODO: return input as a number
+                return Some(z);
             }
-            Err(counter) => {
-                println!("ERR: {} input numbers read", counter);
-            }
-        };
+        }
         input.decrement();
     }
 }
