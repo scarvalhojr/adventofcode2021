@@ -208,13 +208,11 @@ impl Display {
             (seg_g, G),
         ]);
 
-        let res = self.output
-            .iter()
-            .try_fold(0, |acc, signal|
-                map_signal(signal, &seg_map)
-                    .and_then(|signal| signal_to_digit(&signal))
-                    .map(|digit| acc * 10 + digit)
-            );
+        let res = self.output.iter().try_fold(0, |acc, signal| {
+            map_signal(signal, &seg_map)
+                .and_then(|signal| signal_to_digit(&signal))
+                .map(|digit| acc * 10 + digit)
+        });
         res
     }
 }
